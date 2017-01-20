@@ -62,10 +62,9 @@ class dir_explorer():
             if self._recursive:
                 try:
                     sub_directory = directory_entry.as_directory()
+
                     inode = directory_entry.info.meta.addr
 
-                    # This ensures that we don't recurse into a directory
-                    # above the current level and thus avoid circular loops.
                     if inode not in stack:
                         self.list_directory(sub_directory, stack)
 
@@ -81,6 +80,7 @@ class dir_explorer():
             path = "C:"
         elif inode_or_path.startswith("C"):
             path = inode_or_path[3:]
+            self.fullpath = inode_or_path
         else:
             inode = inode_or_path
 
@@ -92,7 +92,7 @@ class dir_explorer():
 
         return directory
 
-    def print_directory_entry(self, directory_entry):
+    def print_directory_entry(self, directory_entry, path_stack=list()):
         meta = directory_entry.info.meta
         name = directory_entry.info.name
 
@@ -104,6 +104,7 @@ class dir_explorer():
         atime = time.ctime(meta.atime)
         ctime = time.ctime(meta.crtime)
         etime = time.ctime(meta.ctime)
+        path = self.fullpath
 
         #TODO : Modifying the expression of the result value
 
@@ -111,7 +112,7 @@ class dir_explorer():
             inode_type = int(attribute.info.type)
             if inode_type in self.ATTRIBUTE_TYPES_TO_PRINT:
                 if meta and name:
-                    self.output.insert_tablerow("1", filename, "path", mtime, atime, ctime, etime)
+                    self.output.insert_tablerow("1", filename, path, mtime, atime, ctime, etime)
 
 
 
