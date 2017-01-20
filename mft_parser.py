@@ -20,11 +20,12 @@ class MFT_reader():
 
         self.bps = int(struct.unpack("<H", vbr[11:13])[0]) #Bytes per sector
         self.spc = int(struct.unpack("<B", vbr[13])[0]) # Sectors per cluster
+        self.cluster = self.bps * self.spc
         startMFTcluster = int(struct.unpack("<Q", vbr[48:56])[0]) #start cluster for $MFT
         self.MFTRecordSize = int(struct.unpack("<B", vbr[64])[0]) # MFT Record 크기 : 필요 없을 수도?
         self.IndexBufSize = int(struct.unpack("<B", vbr[68])[0]) # 폴더 구조에 사용되는 인덱스 버퍼의 크기
 
-        self.MFTEntry0Addr = startMFTcluster * self.bps * self.spc
+        self.MFTEntry0Addr = startMFTcluster * self.cluster
         self.hVolume.seek(self.MFTEntry0Addr + 1024*5)
 
     def readMFTEntry(self):
@@ -67,16 +68,84 @@ class MFT_reader():
         SizeIndxEntryList = int(struct.unpack("<I", self.MFTEntry[IndxNodeHdr + 4:IndxNodeHdr + 8])[0])
         ChildNodeFlag = int(struct.unpack("<I", self.MFTEntry[IndxNodeHdr + 12:IndxNodeHdr + 16])[0])
 
+        self.VCNlist = list()
         while True:
-            EndOfNode, LOE = self.IndexEntry(OffsetStartIndxEntry)
-            if not EndOfNode:
+            EndOfNode, EntryEndOffset, VCN = self.IndexEntry(OffsetStartIndxEntry)
+            if EndOfNode == 0:
                 break
-            # 다음 순서로 넘어가야 됨.
-            OffsetStartIndxEntry = OffsetStartIndxEntry + LOE
+            elif EndOfNode == 1:
+                self.VCNlist.append(VCN)
+                OffsetStartIndxEntry = OffsetStartIndxEntry + EntryEndOffset
+                continue
+            elif EndOfNode == 3:
+                self.VCNlist.append(VCN)
+                OffsetStartIndxEntry = OffsetStartIndxEntry + EntryEndOffset
+                break
+
+        # 자식 노드가 있고, VCN이 있다면 index allocation 속성의 cluster run을 따라가야 한다.
+        # VCNlist가 있는 만큼 런 리스트를 따라가야 된다.
+        if int(struct.unpack("<I", self.MFTEntry[EntryEndOffset:EntryEndOffset+4])[0]) == 160:
+            StartIndxAlloc = EntryEndOffset
+            NonResidentFlag = int(struct.unpack("B", self.MFTEntry[StartIndxAlloc+8])[0])
+            print "[debug:NonResidentFlag]", NonResidentFlag
+            LenName = int(struct.unpack("B", self.MFTEntry[StartIndxAlloc+9])[0])
+            if NonResidentFlag == 1:
+                nonresidentAttrHdr = StartIndxAlloc + 16
+                StartVCN = int(struct.unpack("<Q", self.MFTEntry[nonresidentAttrHdr:nonresidentAttrHdr+8])[0])
+                EndVCN = int(struct.unpack("<Q", self.MFTEntry[nonresidentAttrHdr+8:nonresidentAttrHdr+16])[0])
+                OffsetToRunlist = int(struct.unpack("<H", self.MFTEntry[nonresidentAttrHdr+16:nonresidentAttrHdr+18])[0])
+
+                #TODO : 클러스터 런이 00 일때 그만 읽는 것, VCN
+                StartOffsetRunlist = StartIndxAlloc + OffsetToRunlist
+                Clen, Coffset = self.ClusterRun(StartOffsetRunlist)
+                self.IndexBuffer(Coffset, Clen)
+
+    def IndexBuffer(self, Coffset, Clen):
+        self.hVolume.seek(Coffset*self.cluster)
+        self.IndexBuf = self.hVolume.read(Clen*self.cluster)
+
+        signature = self.IndexBuf[0:4]
+        if signature == 'INDX':
+            IndexRecordStartVCN = int(struct.unpack("<Q", self.IndexBuf[16:24])[0])
+            print "[debug:IndexRecordStartVCN]", IndexRecordStartVCN
+            IndxNodeHdr = 24
+            OffsetStartIndxEntry = IndxNodeHdr + (struct.unpack("<I", self.IndexBuf[IndxNodeHdr:IndxNodeHdr + 4])[0])
+            SizeIndxEntryList = int(struct.unpack("<I", self.IndexBuf[IndxNodeHdr + 4:IndxNodeHdr + 8])[0])
+            ChildNodeFlag = int(struct.unpack("<I", self.IndexBuf[IndxNodeHdr + 12:IndxNodeHdr + 16])[0])
+
+            print "[debug:OffsetStartIndxEntry]", OffsetStartIndxEntry
+
+            if IndexRecordStartVCN in self.VCNlist:
+                self.IndexEntry(OffsetStartIndxEntry)
 
 
+        while True:
+            #Clen 만큼 다 읽으면
+            pass
+
+    def ClusterRun(self, offset):
+        runlist = hex(struct.unpack("B", self.MFTEntry[offset])[0])
+        COffset = int(runlist[2])
+        Clen = int(runlist[3])
+
+        Cluster = list()
+        for element in self.MFTEntry[offset + 1:offset + 1 + Clen]:
+            Cluster.append('{:x}'.format(int(struct.unpack("B", element)[0])))
+        Cluster.reverse()
+        Clusterlen = "".join(Cluster)
+        Clusterlen = int(Clusterlen, 16)
+
+        Cluster = list()
+        for element in self.MFTEntry[offset + 1 + Clen:offset + 1 + Clen + COffset]:
+            Cluster.append('{:x}'.format(int(struct.unpack("B", element)[0])))
+        Cluster.reverse()
+        Clusteroffset = "".join(Cluster)
+        Clusteroffset = int(Clusteroffset, 16)
+
+        return Clusterlen, Clusteroffset
 
     def IndexEntry(self, offset):
+
         # Index Record
         print "====== Index Entry ======"
         FileRef = self.MFTEntry[offset:offset + 8]
@@ -94,22 +163,26 @@ class MFT_reader():
             self.FileNameAttr(FNA)
             #print "[debug:FNA]", FNA
 
+        if Flags == 0:
+            return
+
         if Flags == 1: # 자식 노드가 있음.
             OffsetVCN = offset + LenOfEntry
             print "[debug:OffsetVCN]", OffsetVCN
             VCN = int(struct.unpack("<Q", self.MFTEntry[OffsetVCN - 8:OffsetVCN])[0])
             print "[debug:VCN]", VCN
-            return 1, LenOfEntry
+            return 1, LenOfEntry, VCN
 
         elif Flags == 2: # End of Node
-            return 0, 0
+            OffsetVCN = offset + LenOfEntry
+            return 0, OffsetVCN, 0
 
         elif Flags == 3: # 자식 노드 있음 + End of Node
             OffsetVCN = offset + LenOfEntry
             print "[debug:OffsetVCN]", OffsetVCN
             VCN = int(struct.unpack("<Q", self.MFTEntry[OffsetVCN - 8:OffsetVCN])[0])
             print "[debug:VCN]", VCN
-            return 0, 0
+            return 3, OffsetVCN, VCN
 
     def FileNameAttr(self, FNAdata):
         print "====== FileName Attribute ======"
