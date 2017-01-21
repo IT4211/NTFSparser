@@ -97,21 +97,25 @@ class MFT_reader():
     def IndexBuffer(self, Coffset, Clen):
         self.hVolume.seek(Coffset*self.cluster)
         self.IndexBuf = self.hVolume.read(Clen*self.cluster)
+        LenIndexBuf = len(self.IndexBuf)
+        RecodeStart = 0
+        while True:
+            signature = self.IndexBuf[RecodeStart:RecodeStart+4]
+            if signature == 'INDX':
+                IndexRecordStartVCN = int(struct.unpack("<Q", self.IndexBuf[RecodeStart + 16:RecodeStart + 24])[0])
+                print "[debug:IndexRecordStartVCN]", IndexRecordStartVCN
+                IndxNodeHdr = RecodeStart + 24
 
-        signature = self.IndexBuf[0:4]
-        if signature == 'INDX':
-            IndexRecordStartVCN = int(struct.unpack("<Q", self.IndexBuf[16:24])[0])
-            print "[debug:IndexRecordStartVCN]", IndexRecordStartVCN
-            IndxNodeHdr = 24
-            #OffsetStartIndxEntry = IndxNodeHdr + (struct.unpack("<I", self.IndexBuf[IndxNodeHdr:IndxNodeHdr + 4])[0])
-            #SizeIndxEntryList = int(struct.unpack("<I", self.IndexBuf[IndxNodeHdr + 4:IndxNodeHdr + 8])[0])
-            #ChildNodeFlag = int(struct.unpack("<I", self.IndexBuf[IndxNodeHdr + 12:IndxNodeHdr + 16])[0])
+                self.IndexEntrys = self.IndexBuf[IndxNodeHdr:]
 
-            self.IndexEntrys = self.IndexBuf[IndxNodeHdr:]
-
-            print "[debug:VCNlist]", self.VCNlist
-            if IndexRecordStartVCN in self.VCNlist:
-                self.IndexEntry()
+                print "[debug:VCNlist]", self.VCNlist
+                if IndexRecordStartVCN in self.VCNlist:
+                    RecodeStart = self.IndexEntry()
+                    print "[debug:RecodeStart]", RecodeStart
+                    if RecodeStart == 0:
+                        break
+                    else:
+                        continue
 
 
     def ClusterRun(self, offset):
@@ -143,7 +147,14 @@ class MFT_reader():
         OffsetStartIndxEntry = IndxNodeHdr + int(struct.unpack("<I", self.IndexEntrys[IndxNodeHdr:IndxNodeHdr + 4])[0])
         #이 크기 만큼 읽어야 함
         SizeIndxEntryList = int(struct.unpack("<I", self.IndexEntrys[IndxNodeHdr + 4:IndxNodeHdr + 8])[0])
+        print "[debug:SizeIndxEntryList]", SizeIndxEntryList
+        # SizeAllocIndxEntryList에서 SizeIndxEntryList를 뺀 만큼이 slack 영역
+        SizeAllocIndxEntryList = int(struct.unpack("<I", self.IndexEntrys[IndxNodeHdr +8:IndxNodeHdr +12])[0])
+        print "[debug:SizeAllocIndxEntryList]", SizeAllocIndxEntryList
         ChildNodeFlag = int(struct.unpack("<I", self.IndexEntrys[IndxNodeHdr + 12:IndxNodeHdr + 16])[0])
+
+        IndexEntrySlackData = SizeAllocIndxEntryList - SizeIndxEntryList
+        print "[debug:IndexEntrySlackData]", IndexEntrySlackData #이만큼 건너뛰어야 한다.
 
         SizeIndxEntryList = SizeIndxEntryList - 16
         self.EntrySeek = OffsetStartIndxEntry # 초기 설정.
@@ -187,6 +198,7 @@ class MFT_reader():
                 OffsetVCN = self.EntrySeek
                 print "[debug:OffsetVCN]", OffsetVCN
                 check = LenOfEntry
+                return SizeAllocIndxEntryList + 24
                 #return 0, OffsetVCN, 0
 
             elif Flags == 3: # 자식 노드 있음 + End of Node
