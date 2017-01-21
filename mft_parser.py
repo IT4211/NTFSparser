@@ -1,14 +1,34 @@
 #-*- coding: utf-8 -*-
 
+import os
 import struct
 import time
 
 class MFT_reader():
 
     def __init__(self, dir):
-
-        self.directoryname = dir
+        self.MFTcount = 0
+        self.MFTdict = dict()
         self.directorylist = list()
+        self.directoryname = dir
+
+    def readDirectory(self):
+        if not os.path.isdir(self.directoryname):
+            return
+
+        elif self.directoryname == 'C:\\':
+            self.readRootDir()
+            self.readMFTEntry()
+
+        else:
+            dirlist = self.directoryname.split('\\')
+            self.readRootDir()
+            self.readMFTEntry()
+            for checkdir in dirlist:
+                if checkdir in self.directorylist:
+                    #checkdir의 MFT 값을 가져와서 찾는다.
+                    #self.MFTEntry = 그 MFT Entry
+                    self.readMFTEntry()
 
     def readRootDir(self): # 처음 루트 디렉토리 부터 읽음.
 
@@ -27,6 +47,8 @@ class MFT_reader():
         self.IndexBufSize = int(struct.unpack("<B", vbr[68])[0]) # 폴더 구조에 사용되는 인덱스 버퍼의 크기
 
         self.MFTEntry0Addr = startMFTcluster * self.cluster
+        self.hVolume.seek(self.MFTEntry0Addr)
+        self.MFTEntry0 = self.hVolume.read(1024)
         self.hVolume.seek(self.MFTEntry0Addr + 1024*5)
         self.MFTEntry = self.hVolume.read(1024)
 
@@ -45,6 +67,8 @@ class MFT_reader():
                 OffsetFileAttr = OffsetFileAttr + attr_len
 
             self.listdirectory(OffsetFileAttr) # 주어진 mft에 대한 index root 를 읽어주는 루틴 호출!
+
+        self.hVolume.close()
 
     def listdirectory(self, offset):
         # 디렉토리 안의 목록을 만든다.
@@ -121,7 +145,6 @@ class MFT_reader():
             else:
                 return
 
-
     def ClusterRun(self, offset):
         runlist = hex(struct.unpack("B", self.MFTEntry[offset])[0])
         COffset = int(runlist[2])
@@ -142,6 +165,46 @@ class MFT_reader():
         Clusteroffset = int(Clusteroffset, 16)
 
         return Clusterlen, Clusteroffset
+
+    def MFTClusterRun(self, offset, preCoffset):
+        runlist = hex(struct.unpack("B", self.MFTEntry0[offset])[0])
+        if runlist == '0x0':
+            return 0, 0, 0
+        print "[debug:runlist]", runlist, type(runlist)
+        Coffset = int(runlist[2])
+        print "[debug:Coffset]", Coffset
+        Clen = int(runlist[3])
+        print "[debug:Clen]", Clen
+
+        nextrun = Coffset + Clen
+
+        Cluster = list()
+        for element in self.MFTEntry0[offset + 1:offset + 1 + Clen]:
+            Cluster.append('{:x}'.format(int(struct.unpack("B", element)[0])))
+        Cluster.reverse()
+        Clusterlen = "".join(Cluster)
+        print "[debug:Clusterlen(1)]", Clusterlen
+        Clusterlen = int(Clusterlen, 16)
+        print "[debug:Clusterlen(2)]", Clusterlen
+
+        Cluster = list()
+        for element in self.MFTEntry0[offset + 1 + Clen:offset + 1 + Clen + Coffset]:
+            Cluster.append('{:x}'.format(int(struct.unpack("B", element)[0])))
+        Cluster.reverse()
+        Clusteroffset = "".join(Cluster)
+        if self.checknegative(Cluster[0]):
+            print "[debug:Clusteroffset(1)]", Clusteroffset
+            # Cluster offset에는 음수가 들어갈 수 있음!!!!
+            bitCoffset = format(int(Clusteroffset, 16), '#010b')
+            nega_offset = self.twoscomplement(bitCoffset)
+            Clusteroffset = preCoffset - nega_offset
+            print "[debug:Clusteroffset(2)]", Clusteroffset
+        else:
+            print "[debug:Clusteroffset(1)]", Clusteroffset
+            Clusteroffset = int(Clusteroffset, 16) + preCoffset
+            print "[debug:Clusteroffset(2)]", Clusteroffset
+
+        return Clusterlen, Clusteroffset, nextrun
 
     def IndexEntry(self):
 
@@ -181,7 +244,7 @@ class MFT_reader():
             if LenOfContent > 0:
                 OffsetStartFNA = self.EntrySeek + 16
                 FNA = self.IndexEntrys[OffsetStartFNA:OffsetStartFNA + LenOfContent]
-                self.FileNameAttr(FNA)
+                self.FileNameAttr(FNA, FileRef)
                 #print "[debug:FNA]", FNA
 
             self.EntrySeek = self.EntrySeek + LenOfEntry # 하나의 엔트리를 다 읽었으므로 엔트리 끝으로 이동.
@@ -220,24 +283,105 @@ class MFT_reader():
 
         return 0
 
-    def FileNameAttr(self, FNAdata):
+    def FileNameAttr(self, FNAdata, MFTNumber):
         print "====== FileName Attribute ======"
+        tmp = list()
+        for element in MFTNumber[:6]:
+            tmp.append('{:x}'.format(int(struct.unpack("B", element)[0])))
+        tmp.reverse()
+        MFTNum = "".join(tmp)
+        MFTNum = int(MFTNum, 16)
+
         FileRef = int(struct.unpack("<Q", FNAdata[0:8])[0]) # 앞의 6바이트는 MFT
         CreateTime = int(struct.unpack("<Q", FNAdata[8:16])[0])
         ModifiedTime = int(struct.unpack("<Q", FNAdata[16:24])[0])
         MFTModifiedTime = int(struct.unpack("<Q", FNAdata[24:32])[0])
         LastAccessedTime = int(struct.unpack("<Q", FNAdata[32:40])[0])
-        RealSizeoffile = FNAdata[48:56]
+        RealSizeOfFile = FNAdata[48:56]
         Flags = FNAdata[56:60]
         LenName = int(struct.unpack("B", FNAdata[64])[0])
         Namespace = int(struct.unpack("B", FNAdata[65])[0])
         FileName = FNAdata[66:66+LenName*2]
         print "[debug:FileName]", FileName
         print "================================"
+        FileName.decode("utf-16").encode("mbcs")
+        self.directorylist.append([MFTNum, FileName, RealSizeOfFile, Flags, CreateTime, ModifiedTime, MFTModifiedTime, LastAccessedTime])
 
+    def CreateMFTList(self):
 
+        if self.MFTEntry0[0:4] == 'FILE':
+            # Offset to File attribute MFT Record Header에서 첫 번째 속성의 위치 값을 읽음.
+            OffsetFileAttr = int(struct.unpack("<H", self.MFTEntry0[20:22])[0])
 
-test = MFT_reader("dir")
+            # 속성 값과 길이 값을 읽으면서, $DATA 속성을 찾으면, 스톱
+            while True:
+                attr_type = int(struct.unpack("<I", self.MFTEntry0[OffsetFileAttr:OffsetFileAttr+4])[0])
+                if attr_type == 128:
+                    break
+                attr_len = int(struct.unpack("<I", self.MFTEntry0[OffsetFileAttr+4:OffsetFileAttr+8])[0])
+                OffsetFileAttr = OffsetFileAttr + attr_len
+
+            print "[debug:OffsetFileAttr]", OffsetFileAttr
+            NonResidentFlag = int(struct.unpack("B", self.MFTEntry0[OffsetFileAttr+8])[0])
+            print "[debug:NonResidentFlag]", NonResidentFlag
+            if NonResidentFlag == 1:
+                nonresidentAttrHdr = OffsetFileAttr + 16
+                StartVCN = int(struct.unpack("<Q", self.MFTEntry0[nonresidentAttrHdr:nonresidentAttrHdr+8])[0])
+                print "[debug:StartVCN]", StartVCN
+                EndVCN = int(struct.unpack("<Q", self.MFTEntry0[nonresidentAttrHdr+8:nonresidentAttrHdr+16])[0])
+                print "[debug:EndVCN]", EndVCN
+                OffsetToRunlist = int(struct.unpack("<H", self.MFTEntry0[nonresidentAttrHdr+16:nonresidentAttrHdr+18])[0])
+
+                #TODO : 클러스터 런이 00 일때 그만 읽는 것, VCN
+                print "[debug:OffsetToRunlist]", OffsetToRunlist
+                StartOffsetRunlist = OffsetFileAttr + OffsetToRunlist
+                print "[debug:StartOffsetRunlist(1)]", StartOffsetRunlist
+                Coffset = 0
+                while True:
+                    Clen, Coffset, next = self.MFTClusterRun(StartOffsetRunlist, Coffset)
+                    if next == 0:
+                        break
+                    self.AddMFTList(Coffset, Clen)
+                    if StartVCN == EndVCN:
+                        break
+                    else:
+                        StartVCN = StartVCN + 1
+                    StartOffsetRunlist = StartOffsetRunlist + next + 1
+                    print "[debug:StartOffsetRunlist(2)]", StartOffsetRunlist
+
+    def AddMFTList(self, Coffset, Clen):
+        loopcount = (Clen * self.cluster) / 1024
+        for i in range(loopcount):
+                self.MFTdict[self.MFTcount] = (Coffset * 4096) + (1024 * i)
+                self.MFTcount = self.MFTcount + 1
+
+    def checknegative(self, offset):
+        chk = format(int(offset, 16), '#010b')
+        chk = chk[2:]
+        if chk[0] == '1': # msb가 1이면
+            return True # 음수
+        else:
+            return False
+
+    def twoscomplement(self, binstring):
+        res = str()
+        binstring = binstring[2:]
+        for i in binstring:
+            if i == '0':
+                res += '1'
+            elif i == '1':
+                res += '0'
+        res = int(res, 2)
+        res += 1
+        return res
+
+test = MFT_reader("C:\\")
 test.readRootDir()
+test.CreateMFTList()
+#f = open("MFTlist.txt", "w")
+#for i in test.MFTdict:
+#    f.write(str(test.MFTdict[i])+ "\n")
+#f.close()
 test.readMFTEntry()
-
+#for i in test.directorylist:
+#    print "{0:<7} {1:>20} {2} {3} {4} {5}".format(i[0], i[1].replace("\00", ""), i[4], i[5], i[6], i[7])
