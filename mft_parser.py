@@ -8,6 +8,7 @@ class MFT_reader():
     def __init__(self, dir):
 
         self.directoryname = dir
+        self.directorylist = list()
 
     def readRootDir(self): # 처음 루트 디렉토리 부터 읽음.
 
@@ -100,6 +101,7 @@ class MFT_reader():
         LenIndexBuf = len(self.IndexBuf)
         RecodeStart = 0
         while True:
+            print "[Loop:IndexBuffer]"
             signature = self.IndexBuf[RecodeStart:RecodeStart+4]
             if signature == 'INDX':
                 IndexRecordStartVCN = int(struct.unpack("<Q", self.IndexBuf[RecodeStart + 16:RecodeStart + 24])[0])
@@ -110,12 +112,14 @@ class MFT_reader():
 
                 print "[debug:VCNlist]", self.VCNlist
                 if IndexRecordStartVCN in self.VCNlist:
-                    RecodeStart = self.IndexEntry()
+                    RecodeStart = RecodeStart + self.IndexEntry()
                     print "[debug:RecodeStart]", RecodeStart
                     if RecodeStart == 0:
                         break
                     else:
                         continue
+            else:
+                return
 
 
     def ClusterRun(self, offset):
@@ -162,7 +166,7 @@ class MFT_reader():
         print "[debug:check(1)]", check
 
         while True:
-
+            print "[Loop:IndexEntry]"
             # Index Record
             print "====== Index Entry ======"
             FileRef = self.IndexEntrys[self.EntrySeek:self.EntrySeek + 8]
@@ -198,7 +202,7 @@ class MFT_reader():
                 OffsetVCN = self.EntrySeek
                 print "[debug:OffsetVCN]", OffsetVCN
                 check = LenOfEntry
-                return SizeAllocIndxEntryList + 24
+                return SizeAllocIndxEntryList + 24 # 다음 인덱스 레코드 헤더가 나올 위치, 그대로 가버리네?
                 #return 0, OffsetVCN, 0
 
             elif Flags == 3: # 자식 노드 있음 + End of Node
@@ -230,6 +234,7 @@ class MFT_reader():
         FileName = FNAdata[66:66+LenName*2]
         print "[debug:FileName]", FileName
         print "================================"
+
 
 
 test = MFT_reader("dir")
