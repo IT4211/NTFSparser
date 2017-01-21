@@ -2,15 +2,17 @@
 
 import os
 import struct
-import time
+import render_html
 
 class MFT_reader():
 
     def __init__(self, dir):
         self.MFTcount = 0
         self.MFTdict = dict()
+        self.FNAttr = list()
         self.directorylist = list()
         self.directoryname = dir
+        self.resultlist = list()
 
     def readDirectory(self):
         if not os.path.isdir(self.directoryname):
@@ -25,10 +27,24 @@ class MFT_reader():
             self.readRootDir()
             self.readMFTEntry()
             for checkdir in dirlist:
-                if checkdir in self.directorylist:
-                    #checkdir의 MFT 값을 가져와서 찾는다.
-                    #self.MFTEntry = 그 MFT Entry
-                    self.readMFTEntry()
+                print "[debug:checkdir]", checkdir
+                print self.directorylist
+                for dirname in self.directorylist:
+                    if checkdir in dirname:
+                        self.resultlist = list()
+                        print "[debug:TEST]", dirname
+                        print "[debug:TEST]", dirname[0]
+                        self.MFTEntry = self.getMFTEntry(dirname[0])
+                        self.readMFTEntry()
+                        print "[debug] Get Directory List"
+                        break
+
+    def getMFTEntry(self, MFTEntryNum):
+        MFTEntryNum = int(MFTEntryNum, 10)
+        MFTEntryOffset = self.MFTdict[MFTEntryNum]
+        print "[debug:TEST]", MFTEntryOffset
+        self.hVolume.seek(MFTEntryOffset)
+        return self.hVolume.read(1024)
 
     def readRootDir(self): # 처음 루트 디렉토리 부터 읽음.
 
@@ -61,14 +77,20 @@ class MFT_reader():
             # 속성 값과 길이 값을 읽으면서, INDEX_ROOT 속성을 찾으면, 스톱
             while True:
                 attr_type = int(struct.unpack("<I", self.MFTEntry[OffsetFileAttr:OffsetFileAttr+4])[0])
+                print attr_type
                 if attr_type == 144:
                     break
+                elif attr_type == 0xFFFFFFFF:
+                    return
                 attr_len = int(struct.unpack("<I", self.MFTEntry[OffsetFileAttr+4:OffsetFileAttr+8])[0])
                 OffsetFileAttr = OffsetFileAttr + attr_len
 
             self.listdirectory(OffsetFileAttr) # 주어진 mft에 대한 index root 를 읽어주는 루틴 호출!
 
-        self.hVolume.close()
+        for i in self.FNAttr:
+            items = "{0}:{1}:{2}:{3}:{4}:{5}".format(i[0], i[1].replace("\00", ""), i[4], i[5], i[6], i[7])
+            items = items.split(':')
+            self.directorylist.append(items)
 
     def listdirectory(self, offset):
         # 디렉토리 안의 목록을 만든다.
@@ -133,7 +155,13 @@ class MFT_reader():
                 IndxNodeHdr = RecodeStart + 24
 
                 self.IndexEntrys = self.IndexBuf[IndxNodeHdr:]
-
+                RecodeStart = RecodeStart + self.IndexEntry()
+                print "[debug:RecodeStart]", RecodeStart
+                if RecodeStart == 0:
+                    break
+                else:
+                    continue
+                """
                 print "[debug:VCNlist]", self.VCNlist
                 if IndexRecordStartVCN in self.VCNlist:
                     RecodeStart = RecodeStart + self.IndexEntry()
@@ -142,6 +170,7 @@ class MFT_reader():
                         break
                     else:
                         continue
+                """
             else:
                 return
 
@@ -274,6 +303,7 @@ class MFT_reader():
                 VCN = int(struct.unpack("<Q", self.IndexEntrys[OffsetVCN - 8:OffsetVCN])[0])
                 print "[debug:VCN]", VCN
                 self.VCNlist.append(VCN)
+                return SizeAllocIndxEntryList + 24
 
             # 인덱스 엔트리를 전부 읽었는지 검사
             check = check - LenOfEntry
@@ -305,7 +335,8 @@ class MFT_reader():
         print "[debug:FileName]", FileName
         print "================================"
         FileName.decode("utf-16").encode("mbcs")
-        self.directorylist.append([MFTNum, FileName, RealSizeOfFile, Flags, CreateTime, ModifiedTime, MFTModifiedTime, LastAccessedTime])
+        self.FNAttr.append([MFTNum, FileName, RealSizeOfFile, Flags, CreateTime, ModifiedTime, MFTModifiedTime, LastAccessedTime])
+        self.resultlist.append([FileName.replace("\00", ""), CreateTime, ModifiedTime, MFTModifiedTime, LastAccessedTime])
 
     def CreateMFTList(self):
 
@@ -375,13 +406,11 @@ class MFT_reader():
         res += 1
         return res
 
-test = MFT_reader("C:\\")
-test.readRootDir()
-test.CreateMFTList()
-#f = open("MFTlist.txt", "w")
-#for i in test.MFTdict:
-#    f.write(str(test.MFTdict[i])+ "\n")
-#f.close()
-test.readMFTEntry()
-#for i in test.directorylist:
-#    print "{0:<7} {1:>20} {2} {3} {4} {5}".format(i[0], i[1].replace("\00", ""), i[4], i[5], i[6], i[7])
+if __name__=="__main__":
+    result = render_html.html_result()
+    dir_explorer = MFT_reader("C:\\Program Files")
+    dir_explorer.readRootDir()
+    dir_explorer.CreateMFTList()
+    dir_explorer.readDirectory()
+    result.insert_tablerow(dir_explorer.resultlist)
+    result.output()

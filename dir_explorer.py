@@ -116,7 +116,7 @@ class dir_explorer():
 
 
 
-
+"""
 if __name__=="__main__":
     dir_path = _dir_explorer.ParseCommandLine()
     output = render_html.html_result()
@@ -124,3 +124,4 @@ if __name__=="__main__":
     directory = dir_explorer.open_directory(dir_path)
     dir_explorer.list_directory(directory, [])
     dir_explorer.output.output()
+"""
