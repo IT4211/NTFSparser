@@ -1,6 +1,6 @@
 #-*- coding: utf-8 -*-
 
-import os
+import os, sys
 import struct
 import render_html
 
@@ -10,6 +10,8 @@ class MFT_reader():
         self.MFTcount = 0
         self.MFTdict = dict()
         self.FNAttr = list()
+        self.slack = list()
+        self.IndexBufInfo = list()
         self.directorylist = list()
         self.directoryname = dir
         self.resultlist = list()
@@ -36,7 +38,6 @@ class MFT_reader():
                         print "[debug:TEST]", dirname[0]
                         self.MFTEntry = self.getMFTEntry(dirname[0])
                         self.readMFTEntry()
-                        print "[debug] Get Directory List"
                         break
 
     def getMFTEntry(self, MFTEntryNum):
@@ -144,6 +145,7 @@ class MFT_reader():
     def IndexBuffer(self, Coffset, Clen):
         self.hVolume.seek(Coffset*self.cluster)
         self.IndexBuf = self.hVolume.read(Clen*self.cluster)
+        #self.IndexBufInfo = list()
         LenIndexBuf = len(self.IndexBuf)
         RecodeStart = 0
         while True:
@@ -161,16 +163,6 @@ class MFT_reader():
                     break
                 else:
                     continue
-                """
-                print "[debug:VCNlist]", self.VCNlist
-                if IndexRecordStartVCN in self.VCNlist:
-                    RecodeStart = RecodeStart + self.IndexEntry()
-                    print "[debug:RecodeStart]", RecodeStart
-                    if RecodeStart == 0:
-                        break
-                    else:
-                        continue
-                """
             else:
                 return
 
@@ -250,7 +242,10 @@ class MFT_reader():
         ChildNodeFlag = int(struct.unpack("<I", self.IndexEntrys[IndxNodeHdr + 12:IndxNodeHdr + 16])[0])
 
         IndexEntrySlackData = SizeAllocIndxEntryList - SizeIndxEntryList
+        self.slack.append(self.IndexEntrys[SizeIndxEntryList:SizeAllocIndxEntryList])
+        print "[debug:IndexSlack]", self.slack
         print "[debug:IndexEntrySlackData]", IndexEntrySlackData #이만큼 건너뛰어야 한다.
+
 
         SizeIndxEntryList = SizeIndxEntryList - 16
         self.EntrySeek = OffsetStartIndxEntry # 초기 설정.
@@ -270,10 +265,14 @@ class MFT_reader():
             Flags = int(struct.unpack("<I", self.IndexEntrys[self.EntrySeek + 12:self.EntrySeek + 16])[0])
             print "[debug:Flags]", Flags
 
+            intFileRef = int(struct.unpack("<Q", FileRef)[0])
+            self.IndexBufInfo.append([intFileRef, LenOfEntry, LenOfContent, Flags])
+
             if LenOfContent > 0:
                 OffsetStartFNA = self.EntrySeek + 16
                 FNA = self.IndexEntrys[OffsetStartFNA:OffsetStartFNA + LenOfContent]
                 self.FileNameAttr(FNA, FileRef)
+
                 #print "[debug:FNA]", FNA
 
             self.EntrySeek = self.EntrySeek + LenOfEntry # 하나의 엔트리를 다 읽었으므로 엔트리 끝으로 이동.
@@ -336,7 +335,7 @@ class MFT_reader():
         print "================================"
         FileName.decode("utf-16").encode("mbcs")
         self.FNAttr.append([MFTNum, FileName, RealSizeOfFile, Flags, CreateTime, ModifiedTime, MFTModifiedTime, LastAccessedTime])
-        self.resultlist.append([FileName.replace("\00", ""), CreateTime, ModifiedTime, MFTModifiedTime, LastAccessedTime])
+        self.resultlist.append([FileName.replace("\00", ""), self.directoryname + "\\" + FileName.replace("\00", ""), CreateTime, ModifiedTime, MFTModifiedTime, LastAccessedTime])
 
     def CreateMFTList(self):
 
@@ -407,10 +406,10 @@ class MFT_reader():
         return res
 
 if __name__=="__main__":
-    result = render_html.html_result()
     dir_explorer = MFT_reader("C:\\Program Files")
     dir_explorer.readRootDir()
     dir_explorer.CreateMFTList()
     dir_explorer.readDirectory()
+    result = render_html.html_result("C:\\Program Files", dir_explorer.MFTEntry, dir_explorer.IndexBufInfo, dir_explorer.slack)
     result.insert_tablerow(dir_explorer.resultlist)
     result.output()
