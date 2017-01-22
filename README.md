@@ -7,3 +7,4 @@ Exploring the NTFS folder substructure and outputting metadata
 - ntfs parsing(2) : https://pypi.python.org/pypi/python-ntfs/0.1
 - html generator : https://pypi.python.org/pypi/html
 - html table gen : https://www.decalage.info/python/html
+- TimeStamp : http://forensicswiki.org/wiki/New_Technology_File_System_(NTFS)
